@@ -1,0 +1,10 @@
+# Next Move Theory — installed version. Please keep this file.
+# It records which version of the canon + skills you have installed. At the end
+# of a run, the skills read it to check whether a newer version is out and let
+# you know (see "Updates & telemetry" in NextMoveTheory-README.md).
+# Safe to keep, not safe to lose: delete it and update notices simply stop —
+# nothing breaks, but you can silently fall behind on new canon + skills.
+# It's only a few bytes. Refresh everything (including this file) with /nmt-update, or:
+#   curl -fsSL https://raw.githubusercontent.com/zamesin/Next-Move-Theory-Canon-and-Skills/main/install.sh | bash
+# The line below is the installed version — don't edit it.
+0.6.18
