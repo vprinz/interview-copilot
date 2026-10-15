@@ -38,9 +38,12 @@ HEARD = re.compile(r"^\[(\d+):(\d\d)\] (Я|Респондент): (.*)$")
 def fetch_notion(url):
     """Достаёт страницу Notion отдельным коротким вызовом Claude и возвращает её текст как есть."""
     prompt = f"Вызови инструмент notion-fetch для страницы {url} и после этого ответь одним словом: готово."
+    # Без MAX_MCP_OUTPUT_TOKENS страница больше ~25 тыс. токенов приходит не текстом,
+    # а сообщением «result exceeds maximum allowed tokens» — так 2026-10-15 звонок прошёл без гайда.
     run = subprocess.run(["claude", "-p", "--output-format", "stream-json", "--verbose", "--disable-slash-commands",
                           "--model", "claude-haiku-5-5", "--allowedTools", NOTION_FETCH],
-                         input=prompt, capture_output=True, text=True, cwd=ROOT)
+                         input=prompt, capture_output=True, text=True, cwd=ROOT,
+                         env={**os.environ, "MAX_MCP_OUTPUT_TOKENS": "200000"})
     for line in run.stdout.splitlines():
         event = json.loads(line)
         if event.get("type") != "user":
@@ -49,12 +52,18 @@ def fetch_notion(url):
             if isinstance(block, dict) and block.get("type") == "tool_result" and not block.get("is_error"):
                 content = block["content"]
                 text = content if isinstance(content, str) else "".join(part.get("text", "") for part in content)
-                if len(text) > 500:
-                    try:
-                        return json.loads(text).get("text", text)
-                    except ValueError:
-                        return text
-    raise SystemExit(f"не удалось получить страницу Notion: {url}")
+                # Ответ больше ~50 КБ Claude Code сохраняет в файл, а в поток отдаёт только начало и путь.
+                saved = re.search(r"<persisted-output>.*?saved to: (\S+)", text, re.S)
+                if saved:
+                    content = json.loads(Path(saved[1]).read_text())
+                    text = content if isinstance(content, str) else "".join(part.get("text", "") for part in content)
+                try:
+                    page = json.loads(text)
+                except ValueError:
+                    continue
+                if isinstance(page, dict) and len(page.get("text", "")) > 500:
+                    return page["text"]
+    raise SystemExit(f"не удалось получить страницу Notion целиком: {url}")
 
 
 class Copilot:
@@ -65,6 +74,7 @@ class Copilot:
         self.journal = LIVE / f"{self.stamp}_panel.jsonl"
         self.lock = threading.Lock()
         self.pending = []           # реплики, которые ещё не ушли в сессию
+        self.skipped = []           # вопросы, пропущенные кнопкой, — уйдут в сессию со следующим сообщением
         self.capture_started = None  # когда пошёл звук (по часам компьютера)
         self.zero = 0.0             # с какой секунды звука считать начало интервью
         self.last_update = 0.0
@@ -76,7 +86,7 @@ class Copilot:
         self.state = {"status": "готовлюсь", "note": "читаю канон и контекст интервью", "minutes": args.minutes,
                       "elapsed": 0, "block": "", "ahead": "", "tasks": [], "dig": None, "why": "",
                       "slots": [{"name": name, "mark": "✗", "text": ""} for name in SLOTS],
-                      "question": "", "flags": [], "canon": "", "heard": "", "updated": None, "took": None,
+                      "question": "", "topic": "", "skipped": "", "focus": "", "flags": [], "canon": "", "heard": "", "updated": None, "took": None,
                       "context": 0, "changed": {}}
 
     # --- время ---
@@ -126,6 +136,10 @@ class Copilot:
         reply, info = self.ask(kickoff)
         if "ГОТОВ" not in reply.upper():
             print(f"сессия ответила неожиданно: {reply[:200]}", file=sys.stderr)
+        focus = re.search(r"ФОКУС:\s*(.+)", reply)
+        if focus:
+            self.set(focus=focus[1].strip())
+            print(f"фокус исследования: {focus[1].strip()}", file=sys.stderr)
         print(f"сессия nmt-chat готова за {info['took']} с", file=sys.stderr)
 
     def start_transcriber(self):
@@ -216,22 +230,34 @@ class Copilot:
                     if slot and slot[1] in SLOTS:
                         s["slots"][SLOTS.index(slot[1])] = {"name": slot[1], "mark": slot[2], "text": slot[3]}
             elif key == "ВОПРОС":
-                s["question"] = value.strip("«»\"")
+                topic, _, question = value.rpartition(" | ")
+                s["topic"], s["question"] = topic.strip(), question.strip("«»\" ")
             elif key == "ФЛАЖКИ":
                 s["flags"] = [] if value.strip() in ("—", "-") else [flag.strip() for flag in value.split("|") if flag.strip()]
             elif key == "КАНОН":
                 s["canon"] = value
             s["changed"][key] = time.time()
 
+    def skip(self):
+        """Интервьюер пропустил предложенный вопрос: сразу просим другой."""
+        with self.lock:
+            question = self.state["question"]
+            if question and question not in self.skipped:
+                self.skipped.append(question)
+                self.state["skipped"] = question
+        self.refresh.set()
+
     def update(self, forced):
         with self.lock:
             lines, self.pending = self.pending, []
+            skipped, self.skipped = self.skipped, []
         if not lines and not forced:
             return
         elapsed = self.elapsed()
         left = max(0, self.args.minutes - int(elapsed // 60))
         head = f"[прошло {int(elapsed) // 60:02d}:{int(elapsed) % 60:02d} · осталось {left} мин]"
         body = "\n".join(lines) if lines else "(новых реплик нет — интервьюер просит подсказку сейчас)"
+        body = "".join(f"ПРОПУЩЕН: {question}\n" for question in skipped) + body
         self.set(status="думаю")
         try:
             reply, info = self.ask(f"{head}\n{body}", self.apply)
@@ -241,7 +267,7 @@ class Copilot:
         note = "" if info["ok"] else reply[:160]
         self.set(status="слушаю" if info["ok"] else "ошибка", note=note, updated=time.time(), took=info["took"], context=info["context"])
         with open(self.journal, "a") as journal:
-            journal.write(json.dumps({"at": head, "sent": lines, "reply": reply, "forced": forced, **info}, ensure_ascii=False) + "\n")
+            journal.write(json.dumps({"at": head, "sent": lines, "skipped": skipped, "reply": reply, "forced": forced, **info}, ensure_ascii=False) + "\n")
 
     def set(self, **fields):
         with self.lock:
@@ -276,6 +302,8 @@ class Copilot:
             def do_POST(self):
                 if self.path == "/refresh":
                     copilot.refresh.set()
+                elif self.path == "/skip":
+                    copilot.skip()
                 elif self.path == "/restart-clock":
                     copilot.restart_clock()
                 self.reply(b"{}", "application/json")
