@@ -7,7 +7,7 @@
 import sys
 from pathlib import Path
 
-from copilot import contract, notion
+from copilot import contract, guide, notion
 from copilot.paths import PACKAGE, ROOT
 from copilot.prepare import is_link, prepare
 
@@ -37,9 +37,9 @@ def build(folder, guide_source=None, extra=(), no_defaults=False, allow_unknown=
                           + f"\nсводка: {folder / 'guide.report.txt'}")
         if parsed.source["kind"] == "notion":
             print(f"гайд: {parsed.title} · блоков {len(parsed.blocks)} · изменён {parsed.source['edited']}", file=sys.stderr)
-            parts.append(f"# Гайд под респондента (Notion)\n\n{(folder / 'guide.notion.md').read_text()}")
-        else:
-            parts.append(f"# {Path(guide_source).name}\n\n{(folder / 'guide.md').read_text()}")
+        # Сессия видит гайд таким, каким его разобрал guide.py: с id блоков в заголовках.
+        # Что ни одна строка не потерялась, проверяет сам разбор (guide.check).
+        parts.append(f"# Гайд под респондента — по блокам\n\n{guide.render(parsed)}")
     if not parts:
         raise NoGuide("нет контекста интервью: укажи --guide или --context")
     if not guide_source:
@@ -49,9 +49,18 @@ def build(folder, guide_source=None, extra=(), no_defaults=False, allow_unknown=
     return path, parsed
 
 
-def kickoff(context_path, minutes):
-    """Стартовое сообщение сессии: шаблон prompts/kickoff.md + формат ответа из контракта."""
+def kickoff(context_path, minutes, parsed=None, part_id=None):
+    """Стартовое сообщение сессии: шаблон prompts/kickoff.md, формат ответа из контракта и блоки гайда.
+
+    Без гайда под респондента — блоки по канону (canon-guide.md)."""
+    parsed = parsed or guide.canon()
+    part, blocks = guide.summary(parsed, part_id)
+    titles = {key: f"{key} {block.title}" for key, block in parsed.blocks.items()}
     text = KICKOFF.read_text()
     return (text.replace("{format}", contract.FORMAT)
+            .replace("{blocks}", blocks)
+            .replace("{part}", part.title or parsed.title or "весь звонок")
+            .replace("{cut_order}", ", ".join(titles[k] for k in parsed.cut_order) or "не задан в гайде")
+            .replace("{never_cut}", ", ".join(titles[k] for k in parsed.never_cut) or "не задано в гайде")
             .replace("{context}", str(Path(context_path).resolve().relative_to(ROOT)))
             .replace("{minutes}", str(minutes)))

@@ -120,3 +120,59 @@ def test_session_reads_stream_by_lines():
     assert reply.endswith("Что ещё?") and info["ok"] and info["context"] == 105 and info["out"] == 7
     sent = json.loads(process.stdin.getvalue())
     assert sent["message"]["content"][0]["text"] == "привет"
+
+
+TYPES = {"string": str, "integer": int, "number": (int, float), "array": list, "object": dict, "null": type(None)}
+
+
+def test_snapshot_matches_schema(tmp_path):
+    from copilot import contract
+    c = copilot(tmp_path, [(contract.EXAMPLE, True)])
+    c.update(forced=True)
+    state = c.snapshot()
+    schema = contract.state_schema()
+    assert set(state) == set(schema["properties"])
+    for key, rule in schema["properties"].items():
+        kinds = rule["type"] if isinstance(rule["type"], list) else [rule["type"]]
+        assert isinstance(state[key], tuple(TYPES[k] for k in kinds)), (key, state[key])
+    # гайд по канону: блока 3.1 в нём нет — на панели текст, в ошибках id
+    assert state["timeline"]["current"] == "" and state["block"] == "3.1"
+    assert any(e.startswith("блока 3.1 нет в гайде") for e in state["errors"])
+
+
+def test_server_serves_panel_files_and_state(tmp_path):
+    import urllib.error
+    import urllib.request
+
+    from copilot import server
+    c = copilot(tmp_path, [])
+    http = server.serve(c, 0)
+    base = f"http://127.0.0.1:{http.server_address[1]}"
+    try:
+        page = urllib.request.urlopen(base + "/").read().decode()
+        assert '<link rel="stylesheet" href="/panel.css">' in page and '<script src="/panel.js">' in page
+        for path in ("/panel.css", "/panel.js", "/panel-state.schema.json"):
+            assert urllib.request.urlopen(base + path).status == 200
+        assert json.loads(urllib.request.urlopen(base + "/state").read())["status"] == "готовлюсь"
+        info = json.loads(urllib.request.urlopen(base + "/guide").read())
+        assert info["kind"] == "canon" and info["names"]["4"] == "Прокопка"
+        try:
+            urllib.request.urlopen(base + "/../app.py")
+            raise AssertionError("должно быть 404")
+        except urllib.error.HTTPError as error:
+            assert error.code == 404
+        urllib.request.urlopen(urllib.request.Request(base + "/refresh", method="POST"))
+        assert c.refresh.is_set()
+    finally:
+        http.shutdown()
+
+
+def test_call_minutes_from_guide_part():
+    from pathlib import Path
+
+    from copilot import guide
+    fixtures = Path(__file__).with_name("fixtures")
+    two = guide.parse((fixtures / "guide-two-calls.mcp.md").read_text())
+    one = guide.parse((fixtures / "guide-one-call.md").read_text())
+    assert app.call_minutes(two, None) == 20 and app.call_minutes(two, "ч2") == 40
+    assert app.call_minutes(one, None) == 60 and app.call_minutes(None, None) == 60

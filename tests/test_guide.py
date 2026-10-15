@@ -78,6 +78,11 @@ def test_one_call_cut_rules():
     assert g.blocks["4"].must and g.blocks["10"].must
 
 
+def test_marked_section_is_never_cut():
+    g = guide.parse("# 3. Детально — 15 мин\n## 3.1 [критерии]\n# 6. Числа — 5 мин ⭐\n# 9. Продажа — 5 мин ⚠️ обязательно")
+    assert g.blocks["6"].kind == "section" and g.never_cut == ["6", "9"]
+
+
 def test_one_call_guide_level_parts():
     g = guide.parse(ONE)
     assert [t.text for t in g.traps][1].startswith("**1. Съезд в упражнения.**")

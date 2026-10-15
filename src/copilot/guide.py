@@ -89,7 +89,7 @@ class Note:
     title: str
     line: int
     icon: str = ""
-    after: str = ""                # id блока, после которого стоит заметка
+    after: str = ""                # id блока, после которого стоит заметка; «@<часть>» — в начале части; "" — шапка
     items: list = field(default_factory=list)
 
 
@@ -363,8 +363,14 @@ class Builder:
     def place(self, *lines):
         self.placed.update(lines)
 
+    def anchor(self):
+        """Куда привязать заметку: к началу текущей части, пока в ней нет блоков, иначе — к последнему блоку."""
+        if self.part is not None and not any(block.part == self.part.id for block in self.order):
+            return "@" + self.part.id
+        return self.order[-1] if self.order else ""
+
     def target_note(self, title, line, icon=""):
-        self.note = Note(title, line, icon=icon, after=self.order[-1] if self.order else "")
+        self.note = Note(title, line, icon=icon, after=self.anchor())
         self.guide.notes.append(self.note)
         self.block = self.record = None
         return self.note
@@ -451,8 +457,9 @@ class Builder:
                 self.guide.minutes = parse_minutes(token.text)[0]
             elif self.part is not None and self.part.minutes is None:
                 self.part.minutes = parse_minutes(token.text)[0]
-        if not self.guide.notes or self.guide.notes[-1].icon or self.guide.notes[-1].title:
-            self.guide.notes.append(Note("", token.line))
+        last = self.guide.notes[-1] if self.guide.notes else None
+        if last is None or last.icon or last.title or last.after != self.anchor():
+            self.guide.notes.append(Note("", token.line, after=self.anchor()))
         self.guide.notes[-1].items.append(classify(token))
 
     def feed(self, token):
@@ -608,7 +615,7 @@ def resolve_cut(guide, lines):
                 guide.warnings.append(f"«что резать»: не нашёл блок для «{phrase.strip(' .')}»")
             target += [b for b in found if b not in target]
     for block in guide.blocks.values():
-        if (block.star or block.must) and block.id not in guide.never_cut and block.kind == "block":
+        if (block.star or block.must) and block.id not in guide.never_cut:
             guide.never_cut.append(block.id)
 
 
@@ -747,3 +754,96 @@ def report(guide):
     if guide.warnings:
         out += ["", "Предупреждения:"] + [f"  {w}" for w in guide.warnings]
     return "\n".join(out)
+
+
+# --- гайд для сессии: то, что разобрано, с id блоков ---
+
+LABELS = {"alt": "Иначе", "check": "✅", "trap": "⚠️", "hint": "Пояснение:", "quote": ">", "field": "-"}
+
+
+def render_item(item):
+    text = item.text
+    if item.kind == "question":
+        line = f"> 📖 {'**' + item.label + '** ' if item.label else ''}{'⭐ ' if item.star else ''}«{text}»"
+    elif item.kind == "alt":
+        line = f"Иначе: «{text}»"
+    elif item.kind == "heading":
+        line = f"### {text}"
+    elif item.kind == "table":
+        line = "\n".join(" | ".join(row) for row in item.rows)
+    elif item.kind in ("check", "trap", "hint", "quote"):
+        line = f"{LABELS[item.kind]} {text}"
+    else:
+        line = text
+    return f"(свёрнуто) {line}" if item.collapsed else line
+
+
+def block_line(block):
+    """«[3.5] триггер · 3–5 мин · ⭐ · не резать» — заголовок блока для сессии и для списка в kickoff."""
+    parts = [f"[{block.id}] {block.title}"]
+    if block.deadline_minute is not None:
+        parts.append(f"к {block.deadline_minute}-й мин")
+    elif block.minutes:
+        parts.append(f"{span(block.minutes)} мин")
+    if block.shared_with:
+        parts.append("время вместе с " + ", ".join(block.shared_with))
+    parts += [mark for mark, on in (("⭐", block.star), ("✂️", block.cut), ("не резать", block.must)) if on]
+    if block.warning and not block.must:
+        parts.append(block.warning)
+    if block.note:
+        parts.append(block.note)
+    return " · ".join(parts)
+
+
+def render(guide):
+    """Гайд для context.md: части, блоки с id в заголовках, все строки с подписями их вида."""
+    out = [f"Гайд: {guide.title}"] if guide.title else []
+    notes = {}
+    for note in guide.notes:
+        notes.setdefault(note.after, []).append(note)
+
+    def put_notes(after):
+        for note in notes.get(after, []):
+            out.append("")
+            title = " ".join(x for x in (note.icon, note.title) if x)
+            if title:
+                out.append(f"### {title}")
+            out.extend(render_item(item) for item in note.items)
+
+    put_notes("")
+    if guide.timeline:
+        out += ["", "### Время по плану — к какой минуте что закрыто"]
+        out += [f"- к {row['minute']}-й мин: {row['text']}" for row in guide.timeline]
+    if guide.traps:
+        out += ["", "### ⚠️ Ловушки этого исследования"] + [render_item(item) for item in guide.traps]
+    parts = guide.parts or [Part("", "call", "", 0, blocks=list(guide.blocks))]
+    for part in parts:
+        if part.title:
+            out += ["", f"# {part.title}"]
+        put_notes("@" + part.id)
+        for key in part.blocks:
+            block = guide.blocks[key]
+            out += ["", f"{'##' if block.kind == 'section' or not block.parent else '###'} {block_line(block)}"]
+            out.extend(render_item(item) for item in block.items)
+            for record in block.records:
+                out.append(f"Записываю{' — ' + record.title if record.title else ''}:")
+                out.extend(render_item(item) for item in record.items)
+            put_notes(key)
+    if guide.stop_list:
+        out += ["", "### Стоп-лист"] + [f"- {row['pattern']} — {row['why']}" for row in guide.stop_list]
+    return "\n".join(out).strip() + "\n"
+
+
+def part_of(guide, part_id=None):
+    """Часть-созвон по id; без id или с незнакомым id — первая. Гайд без частей — одна часть со всеми блоками."""
+    calls = [p for p in guide.parts if p.kind == "call"]
+    if not calls:
+        return Part("ч1", "call", "", 0, blocks=list(guide.blocks))
+    return next((p for p in calls if p.id == part_id), calls[0])
+
+
+def summary(guide, part_id=None):
+    """Компактный список блоков части для стартового сообщения: по строке на блок."""
+    part = part_of(guide, part_id)
+    lines = [("  " if guide.blocks[key].parent else "") + "- " + block_line(guide.blocks[key]) for key in part.blocks]
+    return part, "\n".join(lines)

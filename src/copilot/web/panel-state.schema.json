@@ -1,0 +1,187 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "Состояние панели копайлота",
+ "description": "GET /state, раз в полсекунды. Формат ответа модели — версия 2. Статичное за звонок — GET /guide: title, kind (notion | file | canon), part, stop_list, names (id блока → название).",
+ "type": "object",
+ "required": [
+  "ahead",
+  "ahead_ids",
+  "block",
+  "block_id",
+  "canon",
+  "changed",
+  "context",
+  "cut_ids",
+  "dig",
+  "elapsed",
+  "errors",
+  "fills",
+  "flags",
+  "focus",
+  "guide_block",
+  "heard",
+  "minutes",
+  "next",
+  "note",
+  "now",
+  "question",
+  "skipped",
+  "slots",
+  "speed",
+  "status",
+  "tasks",
+  "timeline",
+  "took",
+  "topic",
+  "topic_id",
+  "updated",
+  "waiting",
+  "why"
+ ],
+ "properties": {
+  "block": {
+   "type": "string",
+   "description": "строка БЛОК до первой «|»: id блока (v2) или его название (v1)"
+  },
+  "ahead": {
+   "type": "string",
+   "description": "строка БЛОК после первой «|»"
+  },
+  "tasks": {
+   "type": "array",
+   "description": "задачи респондента его словами, до 4"
+  },
+  "dig": {
+   "type": [
+    "integer",
+    "null"
+   ],
+   "description": "номер задачи для прокопки с нуля или null"
+  },
+  "why": {
+   "type": "string",
+   "description": "почему копать эту задачу"
+  },
+  "slots": {
+   "type": "array",
+   "description": "восемь элементов задачи: name, mark (✓ ≈ ✗), text"
+  },
+  "question": {
+   "type": "string",
+   "description": "следующий вопрос"
+  },
+  "topic": {
+   "type": "string",
+   "description": "часть ВОПРОС до «|»: id блока · что добираем"
+  },
+  "flags": {
+   "type": "array",
+   "description": "флажки, до 3"
+  },
+  "canon": {
+   "type": "string",
+   "description": "ссылка на раздел канона"
+  },
+  "block_id": {
+   "type": "string",
+   "description": "id текущего блока, если он есть в гайде"
+  },
+  "ahead_ids": {
+   "type": "array",
+   "description": "id обязательных блоков, которые ещё впереди"
+  },
+  "cut_ids": {
+   "type": "array",
+   "description": "id блоков, которые модель предлагает резать"
+  },
+  "topic_id": {
+   "type": "string",
+   "description": "id блока, к которому относится вопрос"
+  },
+  "fills": {
+   "type": "string",
+   "description": "что добирает вопрос"
+  },
+  "status": {
+   "type": "string",
+   "description": "готовлюсь | слушаю | думаю | ответ не по формату | ошибка"
+  },
+  "note": {
+   "type": "string",
+   "description": "пояснение к статусу: текст ошибки или неожиданного ответа"
+  },
+  "minutes": {
+   "type": "integer",
+   "description": "на сколько минут рассчитан звонок (часть звонка)"
+  },
+  "elapsed": {
+   "type": "integer",
+   "description": "секунд от начала интервью; клик по таймеру обнуляет"
+  },
+  "now": {
+   "type": "number",
+   "description": "время копайлота, unix-секунды"
+  },
+  "next": {
+   "type": "integer",
+   "description": "секунд до следующего обновления по таймеру"
+  },
+  "waiting": {
+   "type": "integer",
+   "description": "реплик ждут отправки в сессию"
+  },
+  "speed": {
+   "type": "number",
+   "description": "скорость прогона записи; 1 — вживую"
+  },
+  "skipped": {
+   "type": "string",
+   "description": "последний пропущенный вопрос"
+  },
+  "focus": {
+   "type": "string",
+   "description": "фокус исследования: основная задача | бизнес-цель — от сессии на старте"
+  },
+  "heard": {
+   "type": "string",
+   "description": "последняя услышанная реплика"
+  },
+  "updated": {
+   "type": [
+    "number",
+    "null"
+   ],
+   "description": "когда пришёл последний ответ, unix-секунды"
+  },
+  "took": {
+   "type": [
+    "number",
+    "null"
+   ],
+   "description": "сколько шёл последний ответ, секунд"
+  },
+  "context": {
+   "type": "integer",
+   "description": "токенов в контексте сессии"
+  },
+  "changed": {
+   "type": "object",
+   "description": "ключ строки панели → когда она последний раз менялась"
+  },
+  "errors": {
+   "type": "array",
+   "description": "ошибки формата последнего ответа"
+  },
+  "timeline": {
+   "type": "object",
+   "description": "блоки части с состоянием done | current | ahead | cut, план по часам, отставание — timeline.build"
+  },
+  "guide_block": {
+   "type": [
+    "object",
+    "null"
+   ],
+   "description": "вопросы, добивки и ловушки текущего блока из гайда — timeline.block_card"
+  }
+ }
+}

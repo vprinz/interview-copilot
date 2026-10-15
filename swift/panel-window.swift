@@ -1,5 +1,6 @@
-// Окно панели копайлота: узкое, поверх остальных окон (и поверх полноэкранного Meet),
-// показывает страницу панели. Горячая клавиша ⌃⌥H из любого приложения — обновить подсказку сейчас.
+// Окно панели копайлота: показывает страницу панели. По умолчанию — поверх остальных окон (и поверх
+// полноэкранного Meet); булавка в шапке панели снимает и возвращает это, выбор запоминается.
+// Горячая клавиша ⌃⌥H из любого приложения — обновить подсказку сейчас.
 //
 //   bin/panel-window http://127.0.0.1:8765/
 //
@@ -18,8 +19,21 @@ func post(_ path: String) {
     URLSession.shared.dataTask(with: request).resume()
 }
 
-final class Delegate: NSObject, NSApplicationDelegate, WKUIDelegate {
+let pinnedKey = "pinned"
+
+final class Delegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKScriptMessageHandler {
     var window: NSPanel!
+    var web: WKWebView!
+
+    var pinned: Bool {
+        UserDefaults.standard.object(forKey: pinnedKey) as? Bool ?? true
+    }
+
+    func pin(_ on: Bool) {
+        window.level = on ? .floating : .normal
+        window.isFloatingPanel = on
+        UserDefaults.standard.set(on, forKey: pinnedKey)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let screen = NSScreen.main!.visibleFrame
@@ -28,13 +42,17 @@ final class Delegate: NSObject, NSApplicationDelegate, WKUIDelegate {
         window = NSPanel(contentRect: frame, styleMask: [.titled, .closable, .resizable, .nonactivatingPanel],
                          backing: .buffered, defer: false)
         window.title = "Копайлот"
-        window.level = .floating
         window.hidesOnDeactivate = false
-        window.isFloatingPanel = true
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.setFrameAutosaveName("copilot-panel")
+        pin(pinned)
 
-        let web = WKWebView(frame: .zero)
+        // Страница узнаёт, что она в окне (есть мост copilot), и в каком режиме окно сейчас.
+        let config = WKWebViewConfiguration()
+        config.userContentController.add(self, name: "copilot")
+        config.userContentController.addUserScript(WKUserScript(
+            source: "window.copilotWindow = {pinned: \(pinned)};", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        web = WKWebView(frame: .zero, configuration: config)
         web.uiDelegate = self
         window.contentView = web
         web.load(URLRequest(url: base))
@@ -54,6 +72,13 @@ final class Delegate: NSObject, NSApplicationDelegate, WKUIDelegate {
         if status != noErr {
             FileHandle.standardError.write("горячая клавиша ⌃⌥H занята другим приложением — обновляй кнопкой в панели\n".data(using: .utf8)!)
         }
+    }
+
+    // Булавка в панели: {pinned: true|false}.
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any], let on = body["pinned"] as? Bool else { return }
+        pin(on)
+        web.evaluateJavaScript("window.copilotWindowChanged(\(on))")
     }
 
     // Страница спрашивает подтверждение перед сбросом таймера.

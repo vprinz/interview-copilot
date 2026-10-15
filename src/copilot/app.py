@@ -11,7 +11,8 @@ import sys
 import threading
 import time
 
-from copilot import context, contract, native, server
+from copilot import context, contract, native, server, timeline
+from copilot import guide as guide_module
 from copilot.paths import ROOT, new_call_folder
 from copilot.session import Session
 
@@ -19,8 +20,16 @@ HEARD = re.compile(r"^\[(\d+):(\d\d)\] (Я|Респондент): (.*)$")
 
 
 class Copilot:
-    def __init__(self, args, folder=None):
+    def __init__(self, args, folder=None, parsed=None):
         self.args = args
+        # Без гайда под респондента блоки — по канону: у панели и сессии всегда один вход.
+        self.guide = parsed or guide_module.canon()
+        self.part = guide_module.part_of(self.guide, getattr(args, "part", None))
+        self.ids = set(self.guide.blocks)
+        # Статичная часть панели: за звонок не меняется, страница берёт её один раз (GET /guide).
+        self.guide_info = {"title": self.guide.title, "kind": self.guide.source.get("kind", ""),
+                           "part": self.part.title, "stop_list": self.guide.stop_list,
+                           "names": {key: block.title for key, block in self.guide.blocks.items()}}
         self.folder = folder
         self.transcript = folder / "transcript.txt" if folder else None
         self.journal = folder / "panel.jsonl" if folder else None
@@ -60,7 +69,7 @@ class Copilot:
     def start_session(self, context_path):
         self.session = Session(self.args.model)
         self.children.append(self.session.process)
-        kickoff = context.kickoff(context_path, self.args.minutes)
+        kickoff = context.kickoff(context_path, self.args.minutes, self.guide, self.part.id)
         (self.folder / "kickoff.md").write_text(kickoff)
         reply, info = self.session.ask(kickoff)
         if "ГОТОВ" not in reply.upper():
@@ -140,7 +149,7 @@ class Copilot:
         body = "\n".join(lines) if lines else "(новых реплик нет — интервьюер просит подсказку сейчас)"
         body = "".join(f"ПРОПУЩЕН: {question}\n" for question in skipped) + body
         self.set(status="думаю")
-        reply_parser = contract.Reply(self.panel, self.apply)
+        reply_parser = contract.Reply(self.panel, self.apply, self.ids)
 
         def on_line(line):
             with self.lock:
@@ -169,11 +178,17 @@ class Copilot:
             self.state.update(fields)
 
     def snapshot(self):
+        """Состояние для GET /state. Под блокировкой — только копия; таймлайн считается уже без неё."""
         with self.lock:
             now = time.time()
             wait = self.args.interval / self.args.speed - (now - self.last_update)
-            return {**self.state, **self.panel.as_dict(), "elapsed": int(self.elapsed()), "now": now,
-                    "next": max(0, round(wait)), "waiting": len(self.pending), "speed": self.args.speed}
+            elapsed = int(self.elapsed())
+            state, panel, waiting = dict(self.state), self.panel.as_dict(), len(self.pending)
+        current = panel["block_id"] or panel["topic_id"]
+        line = timeline.build(self.guide, self.part, elapsed, current, panel["cut_ids"], panel["ahead_ids"])
+        return {**state, **panel, "elapsed": elapsed, "now": now, "next": max(0, round(wait)), "waiting": waiting,
+                "speed": self.args.speed, "timeline": line,
+                "guide_block": timeline.block_card(self.guide, panel["topic_id"] or current)}
 
     # --- окно ---
 
@@ -220,15 +235,30 @@ class Copilot:
             print(f"\nтранскрипт: {self.transcript}\nжурнал панели: {self.journal}", file=sys.stderr)
 
 
+def call_minutes(parsed, part_id):
+    """Сколько минут звонок, если --minutes не задан: у части «# Часть N — 30 минут» — её верхняя граница, иначе 60."""
+    if parsed:
+        part = guide_module.part_of(parsed, part_id)
+        if part.minutes and part.title.lower().startswith("часть"):
+            return part.minutes["max"]
+    return 60
+
+
 def run(args):
     """Подготовка до звонка (гайд, контекст) и сам звонок. Код выхода 2 — гайд не получен."""
     folder = new_call_folder()
     try:
-        context_path, _ = context.build(folder, args.guide, args.context, args.no_defaults, args.allow_unknown)
+        context_path, parsed = context.build(folder, args.guide, args.context, args.no_defaults, args.allow_unknown)
     except context.NoGuide as error:
         print(f"\nСТОП: звонок не начат.\n{error}\nпапка: {folder}", file=sys.stderr)
         return 2
-    copilot = Copilot(args, folder)
+    if args.minutes is None:
+        args.minutes = call_minutes(parsed, args.part)
+    copilot = Copilot(args, folder, parsed)
+    if args.part and copilot.part.id != args.part:
+        print(f"\nСТОП: в гайде нет части {args.part}; есть: "
+              + ", ".join(p.id for p in copilot.guide.parts if p.kind == "call"), file=sys.stderr)
+        return 2
     copilot.context_path = context_path
     copilot.run()
     return 0
