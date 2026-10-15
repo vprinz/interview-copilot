@@ -386,4 +386,8 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["guide"]:  # проверка гайда до звонка — уже в пакете src/copilot (фаза 2)
+        sys.path.insert(0, str(ROOT / "src"))
+        from copilot.cli import guide_command
+        sys.exit(guide_command(sys.argv[2:]))
     main()

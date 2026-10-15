@@ -1,0 +1,24 @@
+[project]
+name = "interview-copilot"
+version = "0.2.0"
+description = "Личный копайлот для AJTBD-интервью: локальное распознавание, подсказки nmt-chat, панель рядом со звонком"
+requires-python = ">=3.14"
+dependencies = []  # во время звонка — только stdlib
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 130
+include = ["src/**/*.py", "tests/**/*.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]  # длину держит форматирование по месту, а не линтер: русские строки длиннее
