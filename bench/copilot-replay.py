@@ -6,7 +6,7 @@
 уходят куски транскрипта. Для каждого куска меряется время до первого символа
 ответа и до полной панели.
 
-    scripts/copilot-replay.py --label sonnet [--model sonnet] [--effort low] [--limit N]
+    bench/copilot-replay.py --label sonnet [--model sonnet] [--effort low] [--limit N]
 
 Пишет recordings/step2/run-<label>/panels.md и timings.jsonl.
 """
@@ -14,10 +14,13 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+from copilot import context  # noqa: E402
 ap = argparse.ArgumentParser()
 ap.add_argument("--label", required=True)
 ap.add_argument("--model")
@@ -72,8 +75,7 @@ def ask(text):
     raise SystemExit("сессия закрылась без ответа")
 
 
-kickoff = (ROOT / "scripts/copilot-kickoff.md").read_text()
-kickoff = kickoff.replace("{context}", args.context).replace("{minutes}", str(args.minutes))
+kickoff = context.kickoff(ROOT / args.context, args.minutes)
 reply, m = ask(kickoff)
 print(f"подготовка: {m['total_s']} с, чтений файлов: {m['tools']}, модель: {m['model']}, ответ: {reply.strip()[:80]}", flush=True)
 

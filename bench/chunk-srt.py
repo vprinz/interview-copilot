@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Режет .srt на куски по N секунд — так транскрипт приходил бы вживую.
 
-    scripts/chunk-srt.py recordings/andrey.srt recordings/step2/chunks [120]
+    bench/chunk-srt.py recordings/andrey.srt recordings/step2/chunks [120]
 
 Кусок NN.txt: первая строка — «[мм:сс–мм:сс]», дальше реплики, начавшиеся в этом окне.
 """

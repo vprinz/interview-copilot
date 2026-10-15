@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from copilot import cli
+from copilot import cli, prepare
 
 FIXTURES = Path(__file__).with_name("fixtures")
 
@@ -28,6 +28,6 @@ def test_missing_file_stops(tmp_path, capsys):
 
 
 def test_link_detection():
-    assert cli.is_link("https://app.notion.com/p/x-3ec56be1403e8133a6afd32ba67b2764")
-    assert cli.is_link("3ec56be1403e8133a6afd32ba67b2764")
-    assert not cli.is_link("recordings/guide.md")
+    assert prepare.is_link("https://app.notion.com/p/x-3ec56be1403e8133a6afd32ba67b2764")
+    assert prepare.is_link("3ec56be1403e8133a6afd32ba67b2764")
+    assert not prepare.is_link("recordings/guide.md")

@@ -3,7 +3,7 @@
 //
 //   bin/panel-window http://127.0.0.1:8765/
 //
-// Собирается и запускается скриптом scripts/copilot.py.
+// Собирается сам и запускается scripts/copilot.py (src/copilot/native.py).
 
 import AppKit
 import Carbon.HIToolbox
